@@ -32,6 +32,23 @@ from PyQt6.QtWidgets import (
 from src.main_window import MainWindow
 import src.api as api_module
 
+def _wait_for_mesh(window, timeout_ms=5000):
+    """Wait for async mesh generation to complete using a local event loop."""
+    from PyQt6.QtCore import QEventLoop, QTimer
+    loop = QEventLoop()
+    check_timer = QTimer()
+    check_timer.timeout.connect(lambda: (loop.quit() if window.design.mesh_generated else None))
+    check_timer.start(50)
+
+    timeout_timer = QTimer()
+    timeout_timer.setSingleShot(True)
+    timeout_timer.timeout.connect(loop.quit)
+    timeout_timer.start(timeout_ms)
+
+    loop.exec()
+    check_timer.stop()
+    return window.design.mesh_generated
+
 
 @pytest.fixture(scope="module")
 def qt_app():
@@ -450,9 +467,11 @@ def test_btn_generate_mesh_clicked(qt_app, monkeypatch):
     """Clicking btnGenerateMesh sets mesh_generated=True."""
     window = MainWindow()
     monkeypatch.setattr("src.api.gmsh", MagicMock())
+    monkeypatch.setattr("src.api.convert_mesh_with_elmergrid", lambda *a, **k: None)
     btn = window.findChild(QPushButton, "btnGenerateMesh")
     assert btn is not None, "btnGenerateMesh not found"
     QTest.mouseClick(btn, Qt.MouseButton.LeftButton)
+    assert _wait_for_mesh(window), "Mesh did not complete within timeout"
     assert window.design.mesh_generated is True
     window.close()
 
@@ -652,7 +671,52 @@ def test_ctrl_m_shortcut_triggers_mesh(qt_app, monkeypatch):
     """Ctrl+M generates the mesh."""
     window = MainWindow()
     monkeypatch.setattr("src.api.gmsh", MagicMock())
+    monkeypatch.setattr("src.api.convert_mesh_with_elmergrid", lambda *a, **k: None)
     window.actionMesh.trigger()
+    assert _wait_for_mesh(window), "Mesh did not complete within timeout"
+    assert window.design.mesh_generated is True
+    window.close()
+
+
+def test_mesh_button_does_not_block_ui(qt_app, monkeypatch):
+    """Mesh generation runs asynchronously and does not block the UI thread."""
+    import time
+    from PyQt6.QtCore import QEventLoop, QTimer
+    window = MainWindow()
+
+    # Patch generate_mesh to take measurable time
+    def slow_generate_mesh(design):
+        time.sleep(0.3)
+        design.mesh_generated = True
+        return design
+    monkeypatch.setattr("src.api.generate_mesh", slow_generate_mesh)
+
+    timer_fired = [False]
+    def on_timer():
+        timer_fired[0] = True
+    QTimer.singleShot(100, on_timer)
+
+    btn = window.findChild(QPushButton, "btnGenerateMesh")
+    QTest.mouseClick(btn, Qt.MouseButton.LeftButton)
+
+    # Wait for the timer to fire (should happen while mesh is still running)
+    loop = QEventLoop()
+    check_timer = QTimer()
+    check_timer.timeout.connect(lambda: (loop.quit() if timer_fired[0] else None))
+    check_timer.start(50)
+
+    timeout_timer = QTimer()
+    timeout_timer.setSingleShot(True)
+    timeout_timer.timeout.connect(loop.quit)
+    timeout_timer.start(2000)
+
+    loop.exec()
+    check_timer.stop()
+
+    assert timer_fired[0], "QTimer did not fire — UI thread was blocked"
+
+    # Now wait for mesh to complete
+    assert _wait_for_mesh(window), "Mesh did not complete within timeout"
     assert window.design.mesh_generated is True
     window.close()
 

@@ -7,12 +7,10 @@ All business logic is delegated to src.api.
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QThread, QTimer, QObject, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
@@ -73,10 +71,27 @@ from src.dialogs import AboutDialog
 from src.models import SpiderDesign
 
 
+class MeshWorker(QObject):
+    finished = pyqtSignal(object)  # emits the updated SpiderDesign
+    error = pyqtSignal(str)
+
+    def __init__(self, design: SpiderDesign):
+        super().__init__()
+        self.design = design
+
+    def run(self):
+        try:
+            from src.api import generate_mesh
+            design = generate_mesh(self.design)
+            self.finished.emit(design)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SpiderFEA v0.1.0")
+        self.setWindowTitle("SpiderFEA v0.1.1")
         self.setMinimumSize(1000, 700)
 
         init_database()
@@ -593,16 +608,31 @@ class MainWindow(QMainWindow):
     # -----------------------------------------------------------------------
     def _on_generate_mesh(self):
         self.statusBar().showMessage("Meshing...")
-        QApplication.processEvents()
-        try:
-            self.design = generate_mesh(self.design)
-            self.statusBar().showMessage("Mesh generated.")
-        except Exception as exc:
-            QMessageBox.critical(self, "Mesh Error", str(exc))
-            self.statusBar().showMessage("Meshing failed.")
-            return
+        self.btnGenerateMesh.setEnabled(False)
+
+        self._mesh_thread = QThread()
+        self._mesh_worker = MeshWorker(self.design)
+        self._mesh_worker.moveToThread(self._mesh_thread)
+        self._mesh_thread.started.connect(self._mesh_worker.run)
+        self._mesh_worker.finished.connect(self._on_mesh_finished)
+        self._mesh_worker.error.connect(self._on_mesh_error)
+        self._mesh_worker.finished.connect(self._mesh_thread.quit)
+        self._mesh_worker.error.connect(self._mesh_thread.quit)
+        self._mesh_thread.finished.connect(self._mesh_worker.deleteLater)
+        self._mesh_thread.finished.connect(self._mesh_thread.deleteLater)
+        self._mesh_thread.start()
+
+    def _on_mesh_finished(self, design):
+        self.design = design
+        self.btnGenerateMesh.setEnabled(True)
+        self.statusBar().showMessage("Mesh generated.")
         self._update_simulation_tab_state()
         self._update_cross_section_tab()
+
+    def _on_mesh_error(self, message):
+        self.btnGenerateMesh.setEnabled(True)
+        QMessageBox.critical(self, "Mesh Error", message)
+        self.statusBar().showMessage("Meshing failed.")
 
     def _on_run_simulation(self):
         if not self.design.mesh_generated:

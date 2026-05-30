@@ -109,9 +109,6 @@ def recalculate_profile(design: SpiderDesign) -> SpiderDesign:
     profile_z.extend(z_lower.tolist())
     profile_r.extend(r_upper[::-1].tolist())
     profile_z.extend(z_upper[::-1].tolist())
-    # Explicitly close the polygon so first point == last point
-    profile_r.append(profile_r[0])
-    profile_z.append(profile_z[0])
 
     design.profile_r = profile_r
     design.profile_z = profile_z

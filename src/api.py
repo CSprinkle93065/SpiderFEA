@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import csv
 import json
-import os
 import shutil
 import subprocess
 import tempfile
@@ -195,45 +194,54 @@ def generate_mesh(design: SpiderDesign) -> SpiderDesign:
 
     try:
         gmsh.initialize()
-        gmsh.model.add("spider")
+        try:
+            gmsh.model.add("spider")
 
-        # Create points from profile polygon
-        points = []
-        for r, z in zip(design.profile_r, design.profile_z):
-            points.append(gmsh.model.geo.addPoint(r, z, 0.0))
+            # Deduplicate consecutive points to avoid zero-length edges
+            profile_points = list(zip(design.profile_r, design.profile_z))
+            deduped = [profile_points[0]] if profile_points else []
+            for pt in profile_points[1:]:
+                if abs(pt[0] - deduped[-1][0]) > 1e-12 or abs(pt[1] - deduped[-1][1]) > 1e-12:
+                    deduped.append(pt)
 
-        # Create lines connecting points (closed loop)
-        lines = []
-        for i in range(len(points)):
-            lines.append(gmsh.model.geo.addLine(points[i], points[(i + 1) % len(points)]))
+            # Create points from profile polygon
+            points = []
+            for r, z in deduped:
+                points.append(gmsh.model.geo.addPoint(r, z, 0.0))
 
-        # Create curve loop and plane surface
-        curve_loop = gmsh.model.geo.addCurveLoop(lines)
-        surface = gmsh.model.geo.addPlaneSurface([curve_loop])
+            # Create lines connecting points (closed loop)
+            lines = []
+            for i in range(len(points)):
+                lines.append(gmsh.model.geo.addLine(points[i], points[(i + 1) % len(points)]))
 
-        gmsh.model.geo.synchronize()
+            # Create curve loop and plane surface
+            curve_loop = gmsh.model.geo.addCurveLoop(lines)
+            surface = gmsh.model.geo.addPlaneSurface([curve_loop])
 
-        # Physical groups for boundaries
-        gmsh.model.addPhysicalGroup(1, lines, tag=1, name="boundary")
-        gmsh.model.addPhysicalGroup(2, [surface], tag=2, name="spider")
+            gmsh.model.geo.synchronize()
 
-        # Mesh size
-        lc = design.global_element_size * design.mesh_refinement_factor
-        gmsh.model.mesh.setSize(gmsh.model.getEntities(0), lc)
+            # Physical groups for boundaries
+            gmsh.model.addPhysicalGroup(1, lines, tag=1, name="boundary")
+            gmsh.model.addPhysicalGroup(2, [surface], tag=2, name="spider")
 
-        gmsh.model.mesh.generate(2)
+            # Mesh size
+            lc = design.global_element_size * design.mesh_refinement_factor
+            gmsh.model.mesh.setSize(gmsh.model.getEntities(0), lc)
 
-        # Write mesh
-        work_dir = Path(design.working_directory) if design.working_directory else Path(tempfile.gettempdir()) / "spiderfea"
-        work_dir.mkdir(parents=True, exist_ok=True)
-        msh_path = work_dir / "spider.msh"
-        gmsh.write(str(msh_path))
-        gmsh.finalize()
+            gmsh.model.mesh.generate(2)
 
-        # Convert to Elmer format
-        convert_mesh_with_elmergrid(str(msh_path), str(work_dir / "mesh"))
+            # Write mesh
+            work_dir = Path(design.working_directory) if design.working_directory else Path(tempfile.gettempdir()) / "spiderfea"
+            work_dir.mkdir(parents=True, exist_ok=True)
+            msh_path = work_dir / "spider.msh"
+            gmsh.write(str(msh_path))
 
-        design.mesh_generated = True
+            # Convert to Elmer format
+            convert_mesh_with_elmergrid(str(msh_path), str(work_dir / "mesh"))
+
+            design.mesh_generated = True
+        finally:
+            gmsh.finalize()
     except Exception as exc:
         raise RuntimeError(f"Mesh generation failed: {exc}") from exc
 

@@ -39,14 +39,23 @@ def test_default_values_match_definition():
 # ---------------------------------------------------------------------------
 
 def test_recalculate_profile_with_defaults():
-    """Recalculating profile with default inputs yields a closed polygon."""
+    """Recalculating profile with default inputs yields a non-degenerate polygon."""
     d = create_design()
     d = recalculate_profile(d)
     assert len(d.profile_r) == len(d.profile_z)
     assert len(d.profile_r) > 4
-    # Closed polygon: first and last points match
-    assert d.profile_r[0] == pytest.approx(d.profile_r[-1], abs=1e-9)
-    assert d.profile_z[0] == pytest.approx(d.profile_z[-1], abs=1e-9)
+
+
+def test_profile_has_no_degenerate_edges():
+    """Profile polygon must not contain consecutive duplicate points (zero-length edges)."""
+    d = create_design()
+    d = recalculate_profile(d)
+    assert len(d.profile_r) == len(d.profile_z)
+    for i in range(len(d.profile_r) - 1):
+        r1, z1 = d.profile_r[i], d.profile_z[i]
+        r2, z2 = d.profile_r[i + 1], d.profile_z[i + 1]
+        assert not (abs(r1 - r2) < 1e-12 and abs(z1 - z2) < 1e-12), \
+            f"Degenerate edge at index {i}: ({r1}, {z1}) == ({r2}, {z2})"
 
 
 def test_recalculate_profile_reference_tolerance():

@@ -87,3 +87,46 @@ def test_convert_mesh_with_elmergrid_raises_on_failure(monkeypatch):
     monkeypatch.setattr("src.api.subprocess.run", mock_run)
     with pytest.raises(RuntimeError):
         convert_mesh_with_elmergrid("spider.msh", "mesh/")
+
+
+def test_real_mesh_generation_completes():
+    """Real Gmsh mesh generation completes with default geometry."""
+    try:
+        import gmsh
+    except ImportError:
+        pytest.skip("Gmsh not installed")
+
+    design = create_design()
+    design = recalculate_profile(design)
+
+    # Reduce profile resolution for test speed (~2000 -> ~100 points)
+    design.profile_r = design.profile_r[::20]
+    design.profile_z = design.profile_z[::20]
+
+    generate_mesh(design)
+
+    assert design.mesh_generated is True
+
+
+def test_gmsh_finalize_on_failure(monkeypatch):
+    """gmsh.finalize() is called even when mesh generation fails mid-way."""
+    mock_gmsh = MagicMock()
+    mock_gmsh.initialize = MagicMock()
+    call_count = [0]
+
+    def failing_addPoint(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] > 2:
+            raise RuntimeError("Simulated Gmsh failure")
+        return call_count[0]
+
+    mock_gmsh.model.geo.addPoint = failing_addPoint
+    monkeypatch.setattr("src.api.gmsh", mock_gmsh)
+
+    design = create_design()
+    design = recalculate_profile(design)
+
+    with pytest.raises(RuntimeError):
+        generate_mesh(design)
+
+    assert mock_gmsh.finalize.called, "gmsh.finalize was not called after failure"
