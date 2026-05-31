@@ -1,157 +1,119 @@
-# Assessment: Stage 6 — Code Review (Third Review)
+# SpiderFEA Code Review — v0.1.2 (Bug Fix Re-review)
 
-**Project:** SpiderFEA v0.1.0  
-**Reviewer:** Code Critic  
-**Date:** 2026-05-29  
-**Inputs Reviewed:**
-- `src/api.py`
-- `src/main_window.py`
-- `src/dialogs.py`
-- `src/geometry.py`
-- `src/database.py`
-- `src/models.py`
-- `src/main.py`
-- `src/spider_corrugation.py`
-- `src/spider_geometry.py`
-- `src/spider_profile.py`
-- `docs/definition.md`
+**Workflow ID:** wvc_20260531_032531  
+**Revision Type:** bug_fix  
+**Reviewer:** Code Critic (Stage 6, Iteration 1)  
+**Scope:** Modified files + directly dependent files only.
+
+---
+
+## Files Modified in This Revision
+
 - `docs/api_reference.md`
-
-**Verdict:** GO
-
----
-
-## Findings
-
-### G6.1 — All API functions from the API Function List are present and correctly named in src/api.py
-**[PASS]** All 28 functions documented in `docs/api_reference.md` are present in `src/api.py` with identical names and matching signatures. Verified categories:
-- Design Lifecycle (7 functions)
-- Geometry (3 functions)
-- Material Properties (2 functions)
-- Mesh Controls (1 function)
-- Mesh Generation (2 functions)
-- Elmer Simulation (3 functions)
-- Export (4 functions)
-- Database Backup / Restore (2 functions)
-- Utility (4 functions)
-
-`recalculate_profile` and `validate_geometry` are correctly re-exported from `src.geometry` and are importable from `src.api`. `__all__` remains incomplete but does not affect explicit imports used by the UI and tests.
+- `src/api.py`
+- `src/geometry.py`
+- `src/main_window.py`
+- `src/models.py`
+- `tests/test_geometry.py`
+- `tests/test_mesh.py`
+- `tests/test_ui_interactions.py`
 
 ---
 
-### G6.2 — PyQt6 UI code and business logic are separated
-**[PASS]** Verified fixed and stable.
+## Quality Gate Results
 
-1. `src/main_window.py` delegates **all** business logic to `src.api`. No direct database imports remain.
-2. State invalidation (`mesh_generated = False`, `simulation_complete = False`) is correctly located in the API layer:
-   - `update_geometry_parameter()` (api.py lines 130–131)
-   - `update_mesh_control()` (api.py lines 166–167)
-3. The UI layer (`main_window.py`) handles only widget state, event wiring, matplotlib plotting, and user feedback (message boxes, status bar, red-field highlighting).
+### G6.1: API Completeness — PASS
 
----
+All API functions listed in `definition.md` Section 5 are present and correctly named in `src/api.py`:
 
-### G6.3 — No hardcoded absolute paths, credentials, magic numbers, or environment-specific values
-**[PASS]** Verified fixed and stable.
+- **Design Lifecycle:** `create_design`, `save_design`, `load_design`, `list_designs`, `delete_design`, `clone_design`, `get_default_values` ✓
+- **Geometry:** `update_geometry_parameter`, `recalculate_profile`, `validate_geometry` ✓
+- **Material:** `update_material_property`, `list_available_spider_materials` ✓
+- **Mesh Controls:** `update_mesh_control` ✓
+- **Mesh Generation:** `generate_mesh`, `convert_mesh_with_elmergrid` ✓
+- **Simulation:** `run_simulation`, `generate_elmer_sif`, `parse_simulation_results` ✓
+- **Export:** `export_cross_section_png`, `export_force_deflection_csv`, `export_compliance_csv`, `export_results_json` ✓
+- **Database:** `export_database`, `import_database`, `init_database` ✓
+- **Utility:** `set_elmer_solver_path`, `set_elmergrid_path`, `set_working_directory` ✓
 
-- `src/api.py` `convert_mesh_with_elmergrid()` uses `shutil.which("ElmerGrid")` + generic fallback candidates (`C:\Program Files\ElmerFEM\bin\ElmerGrid.exe`, `"ElmerGrid.exe"`). No user-specific paths.
-- `src/api.py` `run_simulation()` uses `shutil.which("ElmerSolver")` + generic fallback candidates. No user-specific paths.
-- `src/database.py` `_get_default_db_path()` uses `Path.home()` for portability.
-- `src/database.py` `_MATERIALS_DB_PATH` uses `Path.home() / "AgentGlobal" / "materials" / "loudspeaker_materials.db"` (portable).
-
----
-
-### G6.4 — No obvious security issues
-**[PASS]**
-- No `eval()` or `exec()` in any source file.
-- Subprocess calls use argument lists, not shell strings.
-- SQL queries in `src/database.py` use parameterized statements (`?` placeholders).
-- File writes validate paths or use user-selected paths via `QFileDialog`.
+New functions added in this bug fix (`check_spider_geometry_valid`, `is_simple_polygon`, `generate_mesh_with_timeout`) are also present in `src/api.py` and correctly documented in `docs/api_reference.md`.
 
 ---
 
-### G6.5 — Error handling exists at all system boundaries
-**[PASS]** All critical system-boundary gaps from prior reviews are resolved.
+### G6.2: UI/Logic Separation — PASS
 
-#### CRITICAL CHECK: Every `sqlite3.connect()` in src/ is inside `try/except`
+The prior failure on this gate has been resolved.
 
-Verified via direct inspection and `grep` across the entire `src/` tree. Four distinct call sites exist, **all** wrapped:
+- `src/main_window.py` now imports `check_spider_geometry_valid` from `src.api` (line 611), not from `src.geometry` directly:
+  ```python
+  def _on_generate_mesh(self):
+      from src.api import check_spider_geometry_valid
+      valid, msg = check_spider_geometry_valid(self.design)
+  ```
+- All other business logic in `src/main_window.py` continues to flow exclusively through `src.api`. No direct database, geometry-engine, or solver imports remain in the UI layer.
+- `MeshWorker.run()` imports `generate_mesh_with_timeout` from `src.api` (line 85).
 
-1. **`src/database.py` `init_database()` (line 42)**
-   ```python
-   try:
-       conn = sqlite3.connect(path)
-   except sqlite3.Error as exc:
-       raise RuntimeError(f"Failed to connect to database: {exc}") from exc
-   ```
-   ✅ Wrapped.
-
-2. **`src/database.py` `_get_connection()` (lines 82, 86)**
-   ```python
-   try:
-       if db_path is not None:
-           init_database(db_path)
-           return sqlite3.connect(db_path)
-       ...
-       return sqlite3.connect(path)
-   except sqlite3.Error as exc:
-       raise RuntimeError(f"Failed to connect to database: {exc}") from exc
-   ```
-   ✅ Both `return sqlite3.connect(...)` calls inside the same `try/except` block.
-
-3. **`src/database.py` `import_database()` merge mode (line 210)**
-   ```python
-   try:
-       shutil.copy2(backup_path, temp_path)
-       conn_temp = sqlite3.connect(temp_path)
-       rows = conn_temp.execute(...).fetchall()
-       conn_temp.close()
-       ...
-   except sqlite3.Error as exc:
-       raise RuntimeError(f"Failed to import database (merge): {exc}") from exc
-   ```
-   ✅ `sqlite3.connect(temp_path)` is inside the `try` block.
-
-4. **`src/database.py` `list_available_spider_materials()` (line 269)** — **Previously failed in Review 2.**
-   ```python
-   try:
-       conn = sqlite3.connect(str(db_path))
-   except sqlite3.Error as exc:
-       raise RuntimeError(f"Failed to connect to materials database: {exc}") from exc
-   ```
-   ✅ **Fixed.** The connection is now wrapped in its own `try/except sqlite3.Error` block, converting raw `sqlite3.Error` into `RuntimeError` before it can propagate to the UI.
-
-#### Other system boundaries
-- `subprocess.run()` in `convert_mesh_with_elmergrid()` and `run_simulation()` — wrapped in `try/except`.
-- `gmsh.initialize()` / `gmsh.write()` / `gmsh.finalize()` in `generate_mesh()` — wrapped in `try/except`.
-- File writes (`sif_path.write_text()`, `fig.savefig()`, CSV/JSON `open()`) — wrapped in `try/except OSError`.
-- `shutil.copy2()` in `export_database()` and `import_database()` — wrapped in `try/except OSError`.
-- `_get_default_db_path()` `Path.mkdir()` — wrapped in `try/except OSError`.
-
-**Minor observation (non-blocking):** `generate_elmer_sif()` and `run_simulation()` contain unwrapped `Path.mkdir()` calls before their respective `try` blocks. In practice these are unlikely to fail (`parents=True, exist_ok=True`), and `generate_elmer_sif()`'s primary I/O (`write_text`) is wrapped. No action required for this review.
+**[PRE-EXISTING / OUT OF SCOPE — Informational]** `src/main_window.py` imports `SpiderDesign` directly from `src.models` rather than through `src.api`. This pattern predates v0.1.2 and was accepted in prior reviews. The dataclass is a DTO, not business logic.
 
 ---
 
-### G6.6 — docs/api_reference.md accurately reflects actual functions in src/api.py
-**[PASS]** Every function in `src/api.py` is documented in `docs/api_reference.md`. No functions are missing. Parameter names, types, default values, return types, and exception contracts match the implementation exactly. Verified:
-- `load_design` optional `db_path` parameter is documented.
-- `list_designs` optional `db_path` parameter is documented.
-- `generate_mesh` fallback behavior (Gmsh not installed) is accurately described.
-- `parse_simulation_results` stub status is correctly noted.
-- `convert_mesh_with_elmergrid` parameter types and `None` return match.
-- `export_cross_section_png` `show_mesh` parameter default matches.
-- `import_database` `merge` parameter default matches.
+### G6.3: No Hardcoded Values — PASS
+
+No new hardcoded absolute paths, credentials, magic numbers, or environment-specific values were introduced in the modified code.
+
+- `timeout_sec: int = 30` in `generate_mesh_with_timeout` is a documented, configurable default parameter — acceptable.
+- `timeout_sec=30` in `MeshWorker.run()` matches the API default — acceptable.
+
+**[PRE-EXISTING / OUT OF SCOPE — Informational]** Fallback hardcoded paths remain in the unmodified portions of `convert_mesh_with_elmergrid` and `run_simulation` (`C:\Program Files\ElmerFEM\bin\...`). These predate this revision.
 
 ---
 
-## Summary
+### G6.4: Security — PASS
 
-| Gate | Status |
-|------|--------|
-| G6.1 | PASS |
-| G6.2 | PASS |
-| G6.3 | PASS |
-| G6.4 | PASS |
-| G6.5 | PASS |
-| G6.6 | PASS |
+- No `eval()` or `exec()` usage in any modified file. ✓
+- No shell injection via `subprocess.run` with user input (all subprocess calls use list arguments without `shell=True`). ✓
+- No unchecked file writes outside the project directory. ✓
+- `generate_mesh_with_timeout` uses `multiprocessing.get_context("spawn")` with a worker that receives a serialized `design.to_dict()`. No deserialization of untrusted data or dynamic code execution occurs. ✓
 
-All issues identified in Review 1 (G6.2 UI/logic separation, G6.3 hardcoded paths, G6.5 error handling) and Review 2 (G6.5 `list_available_spider_materials` `sqlite3.connect` unwrapped) are confirmed resolved. The codebase is ready for Stage 7.
+---
+
+### G6.5: Error Handling — PASS
+
+All system-boundary calls in the modified portions are appropriately wrapped:
+
+- **File I/O:** `sif_path.write_text`, `fig.savefig`, `open()` in CSV/JSON exports — all wrapped in `try/except` with meaningful `RuntimeError` messages. ✓
+- **Subprocess:** `subprocess.run` in `convert_mesh_with_elmergrid` and `run_simulation` — wrapped with `try/except`. ✓
+- **Database:** All database calls in `src/api.py` are wrapped. ✓
+- **Gmsh:** `gmsh.initialize()` / `gmsh.finalize()` wrapped in `try/finally/except` in `generate_mesh`. ✓
+- **Multiprocessing:** `generate_mesh_with_timeout` handles timeout via `process.join(timeout=...)`, terminates hung workers, captures worker exit codes, and re-raises queue errors as `RuntimeError`. The caller (`MeshWorker.run`) wraps the API call in `try/except` and emits error signals. ✓
+
+Per the known-issue directive, the **entire modified files** were scanned for unwrapped occurrences of `sqlite3.connect`, `subprocess.run`, and `open()`. No unwrapped instances were found in new or changed code.
+
+---
+
+### G6.6: API Reference Accuracy — PASS
+
+`docs/api_reference.md` was updated in this revision and accurately reflects the new functions:
+
+- `check_spider_geometry_valid(design: SpiderDesign) -> tuple[bool, str]` — parameter names, types, and return values match implementation. ✓
+- `is_simple_polygon(r: list[float], z: list[float]) -> tuple[bool, int]` — matches implementation. ✓
+- `generate_mesh_with_timeout(design: SpiderDesign, timeout_sec: int = 30) -> SpiderDesign` — matches implementation. ✓
+- `generate_mesh` documentation was updated to mention the new `ValueError` for self-intersecting polygons. ✓
+
+All existing functions in `src/api.py` continue to be documented.
+
+**[PRE-EXISTING / OUT OF SCOPE — Informational]** Several functions in `api_reference.md` omit the optional `db_path: str | None = None` parameter that exists in the implementation (e.g., `save_design`, `delete_design`, `export_database`, `import_database`, `set_elmer_solver_path`, `set_elmergrid_path`, `set_working_directory`, `clone_design`). These omissions predate v0.1.2 and were not introduced by this bug fix.
+
+**[PRE-EXISTING / OUT OF SCOPE — Informational]** `docs/api_reference.md` header still lists Version `0.1.0`; `src/main_window.py` title bar still reads `v0.1.1`. These version strings predate the v0.1.2 revision.
+
+---
+
+## Required Corrections
+
+None.
+
+---
+
+## Verdict
+
+**GO** — All gates pass. The G6.2 UI/logic separation violation from the previous review has been correctly resolved. The bug-fix revision is approved for progression.

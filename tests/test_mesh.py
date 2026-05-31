@@ -12,6 +12,7 @@ from src.api import (
     create_design,
     recalculate_profile,
     generate_mesh,
+    generate_mesh_with_timeout,
     convert_mesh_with_elmergrid,
     update_mesh_control,
 )
@@ -20,6 +21,9 @@ from src.api import (
 @pytest.fixture
 def design_with_profile():
     d = create_design()
+    d.t = 0.1
+    d.h_inner = 5.0
+    d.h_outer = 5.0
     d = recalculate_profile(d)
     return d
 
@@ -90,22 +94,64 @@ def test_convert_mesh_with_elmergrid_raises_on_failure(monkeypatch):
 
 
 def test_real_mesh_generation_completes():
-    """Real Gmsh mesh generation completes with default geometry."""
+    """Real Gmsh mesh generation completes with safe geometry parameters."""
     try:
         import gmsh
     except ImportError:
         pytest.skip("Gmsh not installed")
 
+    from src.geometry import check_spider_geometry_valid, is_simple_polygon
+    from pathlib import Path
+    import tempfile
+
     design = create_design()
+    design.t = 0.1
+    design.h_inner = 5.0
+    design.h_outer = 5.0
     design = recalculate_profile(design)
 
-    # Reduce profile resolution for test speed (~2000 -> ~100 points)
-    design.profile_r = design.profile_r[::20]
-    design.profile_z = design.profile_z[::20]
+    # Pre-flight check must pass
+    valid, msg = check_spider_geometry_valid(design)
+    assert valid, msg
 
-    generate_mesh(design)
+    # Polygon must be simple
+    is_simple, n_x = is_simple_polygon(design.profile_r, design.profile_z)
+    assert is_simple, f"Self-intersections: {n_x}"
+
+    # Mesh must complete within timeout
+    design = generate_mesh_with_timeout(design, timeout_sec=30)
 
     assert design.mesh_generated is True
+
+    # Mesh output must exist and be non-empty
+    work_dir = Path(design.working_directory) if design.working_directory else Path(tempfile.gettempdir()) / "spiderfea"
+    msh_path = work_dir / "spider.msh"
+    assert msh_path.exists()
+    assert msh_path.stat().st_size > 0
+
+
+def test_generate_mesh_with_timeout_rejects_bad_geometry():
+    """generate_mesh_with_timeout raises ValueError for self-intersecting polygons."""
+    design = create_design()
+    design.t = 0.75
+    design.h_inner = 7.0
+    design.h_outer = 10.0
+    design = recalculate_profile(design)
+    with pytest.raises(ValueError):
+        generate_mesh_with_timeout(design, timeout_sec=5)
+
+
+def test_generate_mesh_rejects_self_intersecting_polygon(monkeypatch):
+    """generate_mesh raises ValueError when polygon self-intersects."""
+    mock_gmsh = MagicMock()
+    monkeypatch.setattr("src.api.gmsh", mock_gmsh)
+    design = create_design()
+    design.t = 0.75
+    design.h_inner = 7.0
+    design.h_outer = 10.0
+    design = recalculate_profile(design)
+    with pytest.raises(ValueError, match="self-intersection"):
+        generate_mesh(design)
 
 
 def test_gmsh_finalize_on_failure(monkeypatch):
@@ -124,6 +170,9 @@ def test_gmsh_finalize_on_failure(monkeypatch):
     monkeypatch.setattr("src.api.gmsh", mock_gmsh)
 
     design = create_design()
+    design.t = 0.1
+    design.h_inner = 5.0
+    design.h_outer = 5.0
     design = recalculate_profile(design)
 
     with pytest.raises(RuntimeError):

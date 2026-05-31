@@ -466,6 +466,11 @@ def test_action_about_triggered(qt_app):
 def test_btn_generate_mesh_clicked(qt_app, monkeypatch):
     """Clicking btnGenerateMesh sets mesh_generated=True."""
     window = MainWindow()
+    # Use safe params so pre-flight check passes
+    window.design.t = 0.1
+    window.design.h_inner = 5.0
+    window.design.h_outer = 5.0
+    window.design = api_module.recalculate_profile(window.design)
     monkeypatch.setattr("src.api.gmsh", MagicMock())
     monkeypatch.setattr("src.api.convert_mesh_with_elmergrid", lambda *a, **k: None)
     btn = window.findChild(QPushButton, "btnGenerateMesh")
@@ -670,6 +675,11 @@ def test_ctrl_n_shortcut_triggers_new(qt_app):
 def test_ctrl_m_shortcut_triggers_mesh(qt_app, monkeypatch):
     """Ctrl+M generates the mesh."""
     window = MainWindow()
+    # Use safe params so pre-flight check passes
+    window.design.t = 0.1
+    window.design.h_inner = 5.0
+    window.design.h_outer = 5.0
+    window.design = api_module.recalculate_profile(window.design)
     monkeypatch.setattr("src.api.gmsh", MagicMock())
     monkeypatch.setattr("src.api.convert_mesh_with_elmergrid", lambda *a, **k: None)
     window.actionMesh.trigger()
@@ -684,12 +694,18 @@ def test_mesh_button_does_not_block_ui(qt_app, monkeypatch):
     from PyQt6.QtCore import QEventLoop, QTimer
     window = MainWindow()
 
-    # Patch generate_mesh to take measurable time
-    def slow_generate_mesh(design):
+    # Use safe params so pre-flight check passes
+    window.design.t = 0.1
+    window.design.h_inner = 5.0
+    window.design.h_outer = 5.0
+    window.design = api_module.recalculate_profile(window.design)
+
+    # Patch generate_mesh_with_timeout to take measurable time
+    def slow_generate_mesh_with_timeout(design, timeout_sec=30):
         time.sleep(0.3)
         design.mesh_generated = True
         return design
-    monkeypatch.setattr("src.api.generate_mesh", slow_generate_mesh)
+    monkeypatch.setattr("src.api.generate_mesh_with_timeout", slow_generate_mesh_with_timeout)
 
     timer_fired = [False]
     def on_timer():
@@ -737,4 +753,43 @@ def test_ctrl_r_shortcut_triggers_run(qt_app, monkeypatch):
     monkeypatch.setattr("src.main_window.run_simulation", _mock_run_simulation)
     window.actionRun.trigger()
     assert window.design.simulation_complete is True
+    window.close()
+
+
+def test_ui_preflight_shows_messagebox_for_invalid_geometry(qt_app, monkeypatch):
+    """Clicking Mesh with invalid geometry shows a QMessageBox warning and does not start worker."""
+    window = MainWindow()
+    # Set bad parameters that fail check_spider_geometry_valid
+    window.design.t = 0.75
+    window.design.h_inner = 10.0
+    window.design.h_outer = 10.0
+    window.design.n_peaks = 7
+    window.design = api_module.recalculate_profile(window.design)
+
+    # Track whether a QMessageBox.warning was shown
+    warning_shown = [False]
+    original_warning = QMessageBox.warning
+
+    def _mock_warning(parent, title, text):
+        warning_shown[0] = True
+        assert "Invalid Spider Geometry" in title
+        return None
+
+    monkeypatch.setattr("src.main_window.QMessageBox.warning", _mock_warning)
+
+    # Patch the thread start so we can detect if the worker was spawned
+    thread_started = [False]
+    original_start = type(window._mesh_thread).start if hasattr(window, '_mesh_thread') else None
+
+    def _mock_thread_start(self):
+        thread_started[0] = True
+
+    monkeypatch.setattr("PyQt6.QtCore.QThread.start", _mock_thread_start)
+
+    btn = window.findChild(QPushButton, "btnGenerateMesh")
+    assert btn is not None
+    QTest.mouseClick(btn, Qt.MouseButton.LeftButton)
+
+    assert warning_shown[0], "QMessageBox.warning was not called for invalid geometry"
+    assert not thread_started[0], "Mesh thread was started despite invalid geometry"
     window.close()

@@ -16,7 +16,7 @@ from src.main_window import MainWindow
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("SpiderFEA")
-    app.setApplicationVersion("0.1.1")
+    app.setApplicationVersion("0.1.2")
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

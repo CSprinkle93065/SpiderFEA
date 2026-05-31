@@ -73,7 +73,7 @@ class SpiderDesign:
     stress_field_data: list[tuple] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize design inputs and mesh controls to a dict."""
+        """Serialize design inputs, state, and results to a dict."""
         return {
             "name": self.name,
             "D_inner_spider": self.D_inner_spider,
@@ -97,6 +97,26 @@ class SpiderDesign:
             "elmergrid_path": self.elmergrid_path,
             "working_directory": self.working_directory,
             "num_processors": self.num_processors,
+            # Derived geometry
+            "R_inner_spider": self.R_inner_spider,
+            "R_outer_landing_ID": self.R_outer_landing_ID,
+            "R_outer_landing_OD": self.R_outer_landing_OD,
+            "R_inner_corr": self.R_inner_corr,
+            "z_inner_cone": self.z_inner_cone,
+            "extension": self.extension,
+            # Profile arrays
+            "profile_r": self.profile_r,
+            "profile_z": self.profile_z,
+            # State flags
+            "mesh_generated": self.mesh_generated,
+            "simulation_complete": self.simulation_complete,
+            # Simulation results
+            "max_von_mises_stress": self.max_von_mises_stress,
+            "max_strain": self.max_strain,
+            "force_deflection_data": self.force_deflection_data,
+            "compliance_data": self.compliance_data,
+            "strain_field_data": self.strain_field_data,
+            "stress_field_data": self.stress_field_data,
         }
 
     @classmethod

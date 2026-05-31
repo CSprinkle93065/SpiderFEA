@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import json
+import multiprocessing
 import shutil
 import subprocess
 import tempfile
@@ -21,8 +22,13 @@ import matplotlib.pyplot as plt
 from src.models import SpiderDesign
 
 # Re-export SpiderDesign so tests can import it from src.api
-__all__ = ["SpiderDesign"]  # incomplete, but ensures re-export
-from src.geometry import recalculate_profile, validate_geometry
+__all__ = ["SpiderDesign", "check_spider_geometry_valid"]  # incomplete, but ensures re-export
+from src.geometry import (
+    recalculate_profile,
+    validate_geometry,
+    check_spider_geometry_valid,
+    is_simple_polygon,
+)
 from src.database import (
     save_design_to_db,
     load_design_from_db,
@@ -192,6 +198,14 @@ def generate_mesh(design: SpiderDesign) -> SpiderDesign:
         design.mesh_generated = True
         return design
 
+    # Reactive validation: abort before Gmsh if polygon self-intersects
+    simple, n_x = is_simple_polygon(design.profile_r, design.profile_z)
+    if not simple:
+        raise ValueError(
+            f"Generated spider profile has {n_x} self-intersection(s). "
+            f"Adjust geometry parameters to increase corrugation radius of curvature."
+        )
+
     try:
         gmsh.initialize()
         try:
@@ -245,6 +259,61 @@ def generate_mesh(design: SpiderDesign) -> SpiderDesign:
     except Exception as exc:
         raise RuntimeError(f"Mesh generation failed: {exc}") from exc
 
+    return design
+
+
+def _generate_mesh_worker(design_dict: dict[str, Any], result_queue) -> None:
+    """Worker process for mesh generation with timeout."""
+    try:
+        from src.models import SpiderDesign
+        design = SpiderDesign.from_dict(design_dict)
+        design = generate_mesh(design)
+        result_queue.put(("success", design.to_dict()))
+    except Exception as exc:
+        result_queue.put(("error", str(exc)))
+
+
+def generate_mesh_with_timeout(design: SpiderDesign, timeout_sec: int = 30) -> SpiderDesign:
+    """
+    Build the mesh using the Gmsh Python API with a safety timeout.
+    Converts to Elmer mesh format via ElmerGrid.
+    Raises TimeoutError if Gmsh does not complete within timeout_sec.
+    """
+    # Pre-flight polygon validation before spawning worker
+    simple, n_x = is_simple_polygon(design.profile_r, design.profile_z)
+    if not simple:
+        raise ValueError(
+            f"Generated spider profile has {n_x} self-intersection(s). "
+            f"Adjust geometry parameters to increase corrugation radius of curvature."
+        )
+
+    if gmsh is None:
+        design.mesh_generated = True
+        return design
+
+    ctx = multiprocessing.get_context("spawn")
+    result_queue = ctx.Queue()
+    process = ctx.Process(
+        target=_generate_mesh_worker,
+        args=(design.to_dict(), result_queue),
+    )
+    process.start()
+    process.join(timeout=timeout_sec)
+
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        raise TimeoutError(f"Gmsh mesh generation exceeded {timeout_sec}s")
+
+    if process.exitcode != 0:
+        raise RuntimeError(f"Mesh generation worker exited with code {process.exitcode}")
+
+    status, payload = result_queue.get()
+    if status == "error":
+        raise RuntimeError(f"Mesh generation failed: {payload}")
+
+    result_design = SpiderDesign.from_dict(payload)
+    design.mesh_generated = result_design.mesh_generated
     return design
 
 

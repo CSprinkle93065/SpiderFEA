@@ -151,6 +151,33 @@ Check whether the current parameters produce a physically realizable geometry.
 
 ---
 
+### `check_spider_geometry_valid(design: SpiderDesign) -> tuple[bool, str]`
+
+Predictive pre-flight check: estimate whether the current parameters will produce a simple polygon after normal thickness offset. Uses the approximate minimum corrugation radius of curvature `R_curve_min = L² / (A · π² · n_peaks²)`.
+
+**Parameters:**
+- `design` — The design to check.
+
+**Returns:**
+- `(True, "")` if `half_t / R_curve_min < 1.0` (geometry is expected to be valid).
+- `(False, reason)` if `half_t / R_curve_min >= 1.0` (self-intersection is predicted).
+
+---
+
+### `is_simple_polygon(r: list[float], z: list[float]) -> tuple[bool, int]`
+
+Reactive validation: check whether a closed 2D polygon has self-intersections using an O(n²) segment-pair intersection test.
+
+**Parameters:**
+- `r` — List of radial coordinates.
+- `z` — List of axial coordinates.
+
+**Returns:**
+- `(True, 0)` if the polygon has no self-intersections.
+- `(False, N)` if `N` self-intersections are detected.
+
+---
+
 ## Material Properties
 
 ### `update_material_property(design: SpiderDesign, material_name: str) -> SpiderDesign`
@@ -203,14 +230,35 @@ Set a single mesh control field by name. Does not trigger mesh generation. Sets 
 
 Build the mesh using the **Gmsh Python API** from the current `profile_r` / `profile_z`, convert to Elmer mesh format via ElmerGrid, and set `design.mesh_generated = True`. If Gmsh is not installed, the function falls back to setting the flag without generating a real mesh so tests can proceed.
 
+Reactive validation (`is_simple_polygon`) is performed before invoking Gmsh. If the polygon self-intersects, a `ValueError` is raised immediately.
+
 **Parameters:**
 - `design` — The design containing the profile and mesh controls.
 
 **Returns:** The updated `SpiderDesign`.
 
 **Raises:**
-- `ValueError` — If the profile is empty.
+- `ValueError` — If the profile is empty or self-intersecting.
 - `RuntimeError` — If mesh generation fails.
+
+---
+
+### `generate_mesh_with_timeout(design: SpiderDesign, timeout_sec: int = 30) -> SpiderDesign`
+
+Wraps `generate_mesh()` in a `multiprocessing.Process` with a safety timeout to prevent Gmsh hangs. If Gmsh does not complete within `timeout_sec`, the process is terminated and a `TimeoutError` is raised.
+
+Pre-flight polygon validation (`is_simple_polygon`) is performed before spawning the worker.
+
+**Parameters:**
+- `design` — The design containing the profile and mesh controls.
+- `timeout_sec` — Maximum time to wait for mesh generation (default: 30 seconds).
+
+**Returns:** The updated `SpiderDesign`.
+
+**Raises:**
+- `ValueError` — If the profile is empty or self-intersecting.
+- `TimeoutError` — If Gmsh does not complete within the timeout.
+- `RuntimeError` — If the worker exits with a non-zero code or mesh generation fails.
 
 ---
 

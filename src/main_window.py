@@ -45,6 +45,7 @@ from src.api import (
     update_material_property,
     update_mesh_control,
     generate_mesh,
+    generate_mesh_with_timeout,
     run_simulation,
     save_design,
     load_design,
@@ -81,8 +82,8 @@ class MeshWorker(QObject):
 
     def run(self):
         try:
-            from src.api import generate_mesh
-            design = generate_mesh(self.design)
+            from src.api import generate_mesh_with_timeout
+            design = generate_mesh_with_timeout(self.design, timeout_sec=30)
             self.finished.emit(design)
         except Exception as exc:
             self.error.emit(str(exc))
@@ -607,6 +608,13 @@ class MainWindow(QMainWindow):
     # Button handlers
     # -----------------------------------------------------------------------
     def _on_generate_mesh(self):
+        from src.api import check_spider_geometry_valid
+        valid, msg = check_spider_geometry_valid(self.design)
+        if not valid:
+            QMessageBox.warning(self, "Invalid Spider Geometry", msg)
+            self.statusBar().showMessage("Meshing failed: invalid geometry.")
+            return
+
         self.statusBar().showMessage("Meshing...")
         self.btnGenerateMesh.setEnabled(False)
 

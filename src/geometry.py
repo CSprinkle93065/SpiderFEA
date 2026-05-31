@@ -9,6 +9,7 @@ and definition.md Section 4.4.
 from __future__ import annotations
 
 import numpy as np
+import math
 from math import cos, sin, radians, sqrt, pi
 
 from src.models import SpiderDesign
@@ -136,3 +137,93 @@ def validate_geometry(design: SpiderDesign) -> tuple[bool, str]:
     if design.n_peaks < 1:
         return False, "Number of peaks must be a positive integer."
     return True, ""
+
+
+def check_spider_geometry_valid(design: SpiderDesign) -> tuple[bool, str]:
+    """
+    Returns (True, "") if geometry is expected to produce a simple polygon.
+    Returns (False, reason) if parameters will cause self-intersection.
+    """
+    L = design.R_outer_landing_ID - design.R_inner_corr
+    A = max(design.h_inner, design.h_outer) / 2.0
+    n = design.n_peaks
+    half_t = design.t / 2.0
+
+    R_curve_min = (L ** 2) / (A * math.pi ** 2 * n ** 2)
+
+    ratio = half_t / R_curve_min
+    if ratio >= 1.0:
+        return False, (
+            f"Thickness offset ({half_t:.3f} mm) exceeds minimum corrugation "
+            f"radius of curvature ({R_curve_min:.3f} mm). "
+            f"Reduce thickness, reduce amplitude, or increase peak count."
+        )
+    return True, ""
+
+
+def _segments_intersect(
+    r1: float, z1: float, r2: float, z2: float,
+    r3: float, z3: float, r4: float, z4: float,
+    eps: float = 1e-12,
+) -> bool:
+    """Return True if segments (r1,z1)-(r2,z2) and (r3,z3)-(r4,z4) intersect."""
+
+    def _ccw(ax: float, ay: float, bx: float, by: float, cx: float, cy: float) -> float:
+        return (cy - ay) * (bx - ax) - (by - ay) * (cx - ax)
+
+    def _on_segment(
+        ax: float, ay: float, bx: float, by: float, cx: float, cy: float,
+    ) -> bool:
+        return (
+            min(ax, bx) - eps <= cx <= max(ax, bx) + eps
+            and min(ay, by) - eps <= cy <= max(ay, by) + eps
+        )
+
+    d1 = _ccw(r3, z3, r4, z4, r1, z1)
+    d2 = _ccw(r3, z3, r4, z4, r2, z2)
+    d3 = _ccw(r1, z1, r2, z2, r3, z3)
+    d4 = _ccw(r1, z1, r2, z2, r4, z4)
+
+    if (
+        ((d1 > eps and d2 < -eps) or (d1 < -eps and d2 > eps))
+        and ((d3 > eps and d4 < -eps) or (d3 < -eps and d4 > eps))
+    ):
+        return True
+
+    if abs(d1) <= eps and _on_segment(r3, z3, r4, z4, r1, z1):
+        return True
+    if abs(d2) <= eps and _on_segment(r3, z3, r4, z4, r2, z2):
+        return True
+    if abs(d3) <= eps and _on_segment(r1, z1, r2, z2, r3, z3):
+        return True
+    if abs(d4) <= eps and _on_segment(r1, z1, r2, z2, r4, z4):
+        return True
+
+    return False
+
+
+def is_simple_polygon(r: list[float], z: list[float]) -> tuple[bool, int]:
+    """
+    Returns (True, 0) if polygon has no self-intersections.
+    Returns (False, N) if N self-intersections detected.
+    """
+    n = len(r)
+    if n < 4:
+        return True, 0
+
+    count = 0
+    for i in range(n):
+        r1, z1 = r[i], z[i]
+        r2, z2 = r[(i + 1) % n], z[(i + 1) % n]
+        for j in range(i + 1, n):
+            # Skip adjacent segments (sharing an endpoint)
+            if j == i + 1:
+                continue
+            if i == 0 and j == n - 1:
+                continue
+            r3, z3 = r[j], z[j]
+            r4, z4 = r[(j + 1) % n], z[(j + 1) % n]
+            if _segments_intersect(r1, z1, r2, z2, r3, z3, r4, z4):
+                count += 1
+
+    return count == 0, count

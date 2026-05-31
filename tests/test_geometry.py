@@ -133,3 +133,61 @@ def test_validate_geometry_accepts_valid_custom_inputs():
     valid, msg = validate_geometry(d)
     assert valid is True
     assert msg == ""
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight geometry check
+# ---------------------------------------------------------------------------
+
+def test_check_spider_geometry_valid_bad_params():
+    d = create_design()
+    d.t = 0.75
+    d.h_inner = 7.0
+    d.h_outer = 10.0
+    d.n_peaks = 7
+    d = recalculate_profile(d)
+    from src.geometry import check_spider_geometry_valid
+    valid, msg = check_spider_geometry_valid(d)
+    assert valid is False
+    assert "radius of curvature" in msg or "thickness" in msg
+
+
+def test_check_spider_geometry_valid_good_params():
+    d = create_design()
+    d.t = 0.1
+    d.h_inner = 5.0
+    d.h_outer = 5.0
+    d.n_peaks = 7
+    d = recalculate_profile(d)
+    from src.geometry import check_spider_geometry_valid
+    valid, msg = check_spider_geometry_valid(d)
+    assert valid is True
+    assert msg == ""
+
+
+# ---------------------------------------------------------------------------
+# Polygon simplicity check
+# ---------------------------------------------------------------------------
+
+def test_is_simple_polygon_bad_params():
+    d = create_design()
+    d.t = 0.75
+    d.h_inner = 7.0
+    d.h_outer = 10.0
+    d = recalculate_profile(d)
+    from src.geometry import is_simple_polygon
+    is_simple, n_x = is_simple_polygon(d.profile_r, d.profile_z)
+    assert is_simple is False
+    assert n_x > 0
+
+
+def test_is_simple_polygon_good_params():
+    d = create_design()
+    d.t = 0.1
+    d.h_inner = 5.0
+    d.h_outer = 5.0
+    d = recalculate_profile(d)
+    from src.geometry import is_simple_polygon
+    is_simple, n_x = is_simple_polygon(d.profile_r, d.profile_z)
+    assert is_simple is True
+    assert n_x == 0
