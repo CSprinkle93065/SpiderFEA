@@ -158,3 +158,12 @@ def test_all_buttons_clickable(qt_app):
     finally:
         _api.gmsh = orig_gmsh
         subprocess.run = orig_subprocess_run
+
+
+def test_main_py_contains_freeze_support():
+    """Bug fix: main.py must call multiprocessing.freeze_support() for PyInstaller."""
+    from pathlib import Path
+    main_py = Path(__file__).resolve().parent.parent / "src" / "main.py"
+    assert main_py.is_file()
+    content = main_py.read_text()
+    assert "multiprocessing.freeze_support()" in content

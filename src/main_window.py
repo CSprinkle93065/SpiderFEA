@@ -92,7 +92,7 @@ class MeshWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SpiderFEA v0.1.1")
+        self.setWindowTitle("SpiderFEA v0.1.4")
         self.setMinimumSize(1000, 700)
 
         init_database()

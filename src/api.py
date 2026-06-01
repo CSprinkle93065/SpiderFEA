@@ -207,7 +207,7 @@ def generate_mesh(design: SpiderDesign) -> SpiderDesign:
         )
 
     try:
-        gmsh.initialize()
+        gmsh.initialize([])
         try:
             gmsh.model.add("spider")
 
@@ -308,7 +308,10 @@ def generate_mesh_with_timeout(design: SpiderDesign, timeout_sec: int = 30) -> S
     if process.exitcode != 0:
         raise RuntimeError(f"Mesh generation worker exited with code {process.exitcode}")
 
-    status, payload = result_queue.get()
+    try:
+        status, payload = result_queue.get(timeout=5)
+    except Exception:
+        raise RuntimeError("Mesh generation worker did not return a result")
     if status == "error":
         raise RuntimeError(f"Mesh generation failed: {payload}")
 

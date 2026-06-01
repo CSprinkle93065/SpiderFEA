@@ -2,6 +2,7 @@
 SpiderFEA — Application Entry Point
 """
 
+import multiprocessing
 import sys
 from pathlib import Path
 
@@ -16,11 +17,12 @@ from src.main_window import MainWindow
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("SpiderFEA")
-    app.setApplicationVersion("0.1.2")
+    app.setApplicationVersion("0.1.4")
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

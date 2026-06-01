@@ -46,6 +46,14 @@ def test_generate_mesh_calls_gmsh_api(design_with_profile, monkeypatch):
     assert mock_gmsh.initialize.called or mock_gmsh.model.mesh.generate.called
 
 
+def test_generate_mesh_initializes_gmsh_with_empty_list(design_with_profile, monkeypatch):
+    """Bug fix: gmsh.initialize([]) prevents Gmsh from parsing parent's sys.argv."""
+    mock_gmsh = MagicMock()
+    monkeypatch.setattr("src.api.gmsh", mock_gmsh)
+    generate_mesh(design_with_profile)
+    mock_gmsh.initialize.assert_called_once_with([])
+
+
 def test_generate_mesh_without_profile_fails():
     d = create_design()
     # profile_r is empty by default before recalculation
@@ -179,3 +187,26 @@ def test_gmsh_finalize_on_failure(monkeypatch):
         generate_mesh(design)
 
     assert mock_gmsh.finalize.called, "gmsh.finalize was not called after failure"
+
+
+def test_generate_mesh_with_timeout_raises_when_worker_exits_without_result(design_with_profile, monkeypatch):
+    """Bug fix: result_queue.get(timeout=5) must raise RuntimeError when child exits without result."""
+    import queue
+
+    mock_queue = MagicMock()
+    mock_queue.get.side_effect = queue.Empty()
+
+    mock_process = MagicMock()
+    mock_process.is_alive.return_value = False
+    mock_process.exitcode = 0
+
+    mock_ctx = MagicMock()
+    mock_ctx.Queue.return_value = mock_queue
+    mock_ctx.Process.return_value = mock_process
+
+    monkeypatch.setattr("multiprocessing.get_context", lambda name: mock_ctx)
+    # Ensure gmsh is not None so we enter the multiprocessing path
+    monkeypatch.setattr("src.api.gmsh", MagicMock())
+
+    with pytest.raises(RuntimeError, match="Mesh generation worker did not return a result"):
+        generate_mesh_with_timeout(design_with_profile, timeout_sec=30)

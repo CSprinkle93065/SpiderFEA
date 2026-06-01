@@ -793,3 +793,42 @@ def test_ui_preflight_shows_messagebox_for_invalid_geometry(qt_app, monkeypatch)
     assert warning_shown[0], "QMessageBox.warning was not called for invalid geometry"
     assert not thread_started[0], "Mesh thread was started despite invalid geometry"
     window.close()
+
+
+def test_btn_generate_mesh_reenabled_after_error(qt_app, monkeypatch):
+    """Bug fix: btnGenerateMesh must be re-enabled after a mesh generation error."""
+    from PyQt6.QtCore import QEventLoop, QTimer
+    window = MainWindow()
+    # Use safe params so pre-flight check passes
+    window.design.t = 0.1
+    window.design.h_inner = 5.0
+    window.design.h_outer = 5.0
+    window.design = api_module.recalculate_profile(window.design)
+
+    def _failing_generate_mesh_with_timeout(design, timeout_sec=30):
+        raise RuntimeError("Simulated mesh failure")
+
+    monkeypatch.setattr("src.api.generate_mesh_with_timeout", _failing_generate_mesh_with_timeout)
+    # Prevent blocking QMessageBox from freezing the test
+    monkeypatch.setattr("PyQt6.QtWidgets.QMessageBox.critical", lambda *a, **k: None)
+    btn = window.findChild(QPushButton, "btnGenerateMesh")
+    assert btn is not None
+    assert btn.isEnabled()
+    QTest.mouseClick(btn, Qt.MouseButton.LeftButton)
+
+    # Wait for async error handling to re-enable the button
+    loop = QEventLoop()
+    check_timer = QTimer()
+    check_timer.timeout.connect(lambda: loop.quit() if btn.isEnabled() else None)
+    check_timer.start(50)
+
+    timeout_timer = QTimer()
+    timeout_timer.setSingleShot(True)
+    timeout_timer.timeout.connect(loop.quit)
+    timeout_timer.start(3000)
+
+    loop.exec()
+    check_timer.stop()
+
+    assert btn.isEnabled(), "btnGenerateMesh was not re-enabled after error"
+    window.close()

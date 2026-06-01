@@ -19,7 +19,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("font-weight: bold;")
         layout.addWidget(title)
 
-        version = QLabel("<p>Version 0.1.1</p>")
+        version = QLabel("<p>Version 0.1.4</p>")
         layout.addWidget(version)
 
         credits = QLabel(
