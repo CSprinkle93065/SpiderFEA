@@ -1,17 +1,18 @@
 # Project Context: SpiderFEA
 
-**Current Version:** 0.1.3
+**Current Version:** 0.1.4
 **GitHub Repository:** https://github.com/CSprinkle93065/SpiderFEA
 **Release Stage:** pre-release
 **Git Branch:** main
 **Last Updated:** 2026-06-01
 
 ## What This Version Contains
-SpiderFEA is a standalone Windows desktop application serving as a graphical frontend for FEA simulations of loudspeaker spider transducers using ElmerFEM. This release fixes Type B junction self-intersections by implementing segment-wise offset with miter trimming and arc capping (Option D). The previous normal-offset approach produced self-intersecting polygons at Type B junctions (flat-to-roll transitions), causing Gmsh to hang or crash. The new algorithm offsets each segment independently, trims miters at acute junction angles, and caps the ends with arcs, guaranteeing valid non-self-intersecting geometry for user parameters (h=2/2, OD=130, LID=120).
+SpiderFEA is a standalone Windows desktop application serving as a graphical frontend for FEA simulations of loudspeaker spider transducers using ElmerFEM. This release fixes mesh generation hangs and second window spawns caused by missing `multiprocessing.freeze_support()`, Gmsh `sys.argv` parsing, and infinite queue blocks. The `freeze_support()` call ensures safe multiprocessing on Windows (required by PyInstaller executables), `gmsh.initialize([])` prevents Gmsh from interpreting the application command line, and a queue timeout prevents the UI thread from blocking indefinitely during mesh generation.
 
 ## Version History
 | Version | Type | Date | Summary |
 |---------|------|------|---------|
+| 0.1.4 | bug_fix | 2026-06-01 | Fixed mesh generation hang and second window spawn — added multiprocessing.freeze_support(), gmsh.initialize([]), queue timeout |
 | 0.1.3 | bug_fix | 2026-06-01 | Fixed Type B junction self-intersections — segment-wise offset with miter trimming and arc capping (Option D) |
 | 0.1.2 | bug_fix | 2026-05-31 | Fixed mesh generation hang — geometry pre-flight check, polygon simplicity validation, Gmsh timeout wrapper |
 | 0.1.1 | bug_fix | 2026-05-29 | Fixed mesh generation hang (duplicate closing point, deduplication, finalize on failure, async UI thread) |
