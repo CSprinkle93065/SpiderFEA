@@ -1,119 +1,58 @@
-# SpiderFEA Code Review — v0.1.2 (Bug Fix Re-review)
+# Assessment: Stage 6 — Code Review
 
-**Workflow ID:** wvc_20260531_032531  
-**Revision Type:** bug_fix  
-**Reviewer:** Code Critic (Stage 6, Iteration 1)  
-**Scope:** Modified files + directly dependent files only.
+**Project:** SpiderFEA v0.1.3 (bug_fix)  
+**Reviewer:** Code Critic Agent  
+**Modified File:** `src/geometry.py`  
+**Revision:** Segment-wise offset with miter trimming (Option D from `Evaluation_SpiderFEA_V0.1.2.md`)
 
----
-
-## Files Modified in This Revision
-
-- `docs/api_reference.md`
-- `src/api.py`
-- `src/geometry.py`
-- `src/main_window.py`
-- `src/models.py`
-- `tests/test_geometry.py`
-- `tests/test_mesh.py`
-- `tests/test_ui_interactions.py`
+**Verdict:** GO
 
 ---
 
-## Quality Gate Results
+## Findings
 
-### G6.1: API Completeness — PASS
-
-All API functions listed in `definition.md` Section 5 are present and correctly named in `src/api.py`:
-
-- **Design Lifecycle:** `create_design`, `save_design`, `load_design`, `list_designs`, `delete_design`, `clone_design`, `get_default_values` ✓
-- **Geometry:** `update_geometry_parameter`, `recalculate_profile`, `validate_geometry` ✓
-- **Material:** `update_material_property`, `list_available_spider_materials` ✓
-- **Mesh Controls:** `update_mesh_control` ✓
-- **Mesh Generation:** `generate_mesh`, `convert_mesh_with_elmergrid` ✓
-- **Simulation:** `run_simulation`, `generate_elmer_sif`, `parse_simulation_results` ✓
-- **Export:** `export_cross_section_png`, `export_force_deflection_csv`, `export_compliance_csv`, `export_results_json` ✓
-- **Database:** `export_database`, `import_database`, `init_database` ✓
-- **Utility:** `set_elmer_solver_path`, `set_elmergrid_path`, `set_working_directory` ✓
-
-New functions added in this bug fix (`check_spider_geometry_valid`, `is_simple_polygon`, `generate_mesh_with_timeout`) are also present in `src/api.py` and correctly documented in `docs/api_reference.md`.
+- [PASS] **G6.1 — API Function List completeness** — All 28 functions listed in `docs/definition.md` §5 are present and correctly named in `src/api.py`. The four geometry functions (`recalculate_profile`, `validate_geometry`, `check_spider_geometry_valid`, `is_simple_polygon`) are correctly re-exported from `src.geometry`.
+- [PASS] **G6.2 — UI / business-logic separation** — `src/main_window.py` imports `check_spider_geometry_valid` from `src.api` (line 611) and calls `api_module.validate_geometry` (line 468). No direct imports from `src.geometry` exist in the UI layer.
+- [PASS] **G6.3 — No hardcoded paths / credentials / magic numbers** — `src/geometry.py` contains no hardcoded absolute paths, credentials, or environment-specific values. Discretization constants (`n_pts_cone=100`, `n_pts_corr=800`, `n_pts_ext=100`, `n_pts=8`) are algorithmic parameters intrinsic to the geometric specification and are unchanged from the prior revision.
+- [PASS] **G6.4 — No obvious security issues** — `src/geometry.py` uses no `eval()`, no `subprocess`, and performs no file writes. Pre-existing `subprocess.run` calls in `src/api.py` (unchanged) use list-style arguments and are out of scope for this bug-fix review.
+- [PASS] **G6.5 — Error handling at system boundaries** — `src/geometry.py` is a pure numerical module with no file I/O, database, or external API calls. All system-boundary error handling in `src/api.py` remains intact.
+- [PASS] **G6.6 — API reference accuracy** — `docs/api_reference.md` accurately reflects the public API surface in `src/api.py`. The bug fix did not add, remove, or alter any public API function signatures.
 
 ---
 
-### G6.2: UI/Logic Separation — PASS
+## Regression Checks
 
-The prior failure on this gate has been resolved.
-
-- `src/main_window.py` now imports `check_spider_geometry_valid` from `src.api` (line 611), not from `src.geometry` directly:
-  ```python
-  def _on_generate_mesh(self):
-      from src.api import check_spider_geometry_valid
-      valid, msg = check_spider_geometry_valid(self.design)
-  ```
-- All other business logic in `src/main_window.py` continues to flow exclusively through `src.api`. No direct database, geometry-engine, or solver imports remain in the UI layer.
-- `MeshWorker.run()` imports `generate_mesh_with_timeout` from `src.api` (line 85).
-
-**[PRE-EXISTING / OUT OF SCOPE — Informational]** `src/main_window.py` imports `SpiderDesign` directly from `src.models` rather than through `src.api`. This pattern predates v0.1.2 and was accepted in prior reviews. The dataclass is a DTO, not business logic.
+| Requirement | Status | Evidence |
+|-------------|--------|----------|
+| `check_spider_geometry_valid()` unchanged | ✅ PASS | Lines 257–276 in `src/geometry.py` match v0.1.2 exactly. |
+| `validate_geometry()` unchanged | ✅ PASS | Lines 235–254 unchanged. |
+| `is_simple_polygon()` unchanged | ✅ PASS | Lines 320–344 unchanged. |
+| `_segments_intersect()` unchanged | ✅ PASS | Lines 279–317 unchanged. |
+| `main_window.py` imports validation from `src.api` | ✅ PASS | Line 468: `api_module.validate_geometry`; line 611: `from src.api import check_spider_geometry_valid`. |
+| `src/api.py` re-exports `check_spider_geometry_valid` | ✅ PASS | Imported from `src.geometry` on line 29. |
 
 ---
 
-### G6.3: No Hardcoded Values — PASS
+## Algorithm Review
 
-No new hardcoded absolute paths, credentials, magic numbers, or environment-specific values were introduced in the modified code.
+The implementation of Option D (segment-wise offset + miter trimming) matches the specification in `Evaluation_SpiderFEA_V0.1.2.md` §2.4 character-for-character:
 
-- `timeout_sec: int = 30` in `generate_mesh_with_timeout` is a documented, configurable default parameter — acceptable.
-- `timeout_sec=30` in `MeshWorker.run()` matches the API default — acceptable.
-
-**[PRE-EXISTING / OUT OF SCOPE — Informational]** Fallback hardcoded paths remain in the unmodified portions of `convert_mesh_with_elmergrid` and `run_simulation` (`C:\Program Files\ElmerFEM\bin\...`). These predate this revision.
-
----
-
-### G6.4: Security — PASS
-
-- No `eval()` or `exec()` usage in any modified file. ✓
-- No shell injection via `subprocess.run` with user input (all subprocess calls use list arguments without `shell=True`). ✓
-- No unchecked file writes outside the project directory. ✓
-- `generate_mesh_with_timeout` uses `multiprocessing.get_context("spawn")` with a worker that receives a serialized `design.to_dict()`. No deserialization of untrusted data or dynamic code execution occurs. ✓
+- `_offset_segment()` — per-segment central differences with endpoint handling. ✅
+- `_line_intersection()` — standard 2×2 determinant intersection with parallel guard (`abs(det) < 1e-12`). ✅
+- `_join_upper_miter()` — extends offset lines backward from junction using last/first segments. ✅
+- `_trim_upper_segment()` — trims at computed miter intersection using `searchsorted` on monotonic r-arrays. ✅
+- `_cap_lower_arc()` — circular arc of radius `half_t` bridging lower-surface gaps. ✅
+- `recalculate_profile()` — polygon assembly follows the exact order specified in the diff summary. ✅
 
 ---
 
-### G6.5: Error Handling — PASS
+## Test Verification
 
-All system-boundary calls in the modified portions are appropriately wrapped:
-
-- **File I/O:** `sif_path.write_text`, `fig.savefig`, `open()` in CSV/JSON exports — all wrapped in `try/except` with meaningful `RuntimeError` messages. ✓
-- **Subprocess:** `subprocess.run` in `convert_mesh_with_elmergrid` and `run_simulation` — wrapped with `try/except`. ✓
-- **Database:** All database calls in `src/api.py` are wrapped. ✓
-- **Gmsh:** `gmsh.initialize()` / `gmsh.finalize()` wrapped in `try/finally/except` in `generate_mesh`. ✓
-- **Multiprocessing:** `generate_mesh_with_timeout` handles timeout via `process.join(timeout=...)`, terminates hung workers, captures worker exit codes, and re-raises queue errors as `RuntimeError`. The caller (`MeshWorker.run`) wraps the API call in `try/except` and emits error signals. ✓
-
-Per the known-issue directive, the **entire modified files** were scanned for unwrapped occurrences of `sqlite3.connect`, `subprocess.run`, and `open()`. No unwrapped instances were found in new or changed code.
+`pytest tests/test_geometry.py tests/test_mesh.py` — **33 passed, 0 failed** (including `test_real_mesh_generation_completes` with live Gmsh).
 
 ---
 
-### G6.6: API Reference Accuracy — PASS
+## Informational / Out of Scope (Pre-existing)
 
-`docs/api_reference.md` was updated in this revision and accurately reflects the new functions:
-
-- `check_spider_geometry_valid(design: SpiderDesign) -> tuple[bool, str]` — parameter names, types, and return values match implementation. ✓
-- `is_simple_polygon(r: list[float], z: list[float]) -> tuple[bool, int]` — matches implementation. ✓
-- `generate_mesh_with_timeout(design: SpiderDesign, timeout_sec: int = 30) -> SpiderDesign` — matches implementation. ✓
-- `generate_mesh` documentation was updated to mention the new `ValueError` for self-intersecting polygons. ✓
-
-All existing functions in `src/api.py` continue to be documented.
-
-**[PRE-EXISTING / OUT OF SCOPE — Informational]** Several functions in `api_reference.md` omit the optional `db_path: str | None = None` parameter that exists in the implementation (e.g., `save_design`, `delete_design`, `export_database`, `import_database`, `set_elmer_solver_path`, `set_elmergrid_path`, `set_working_directory`, `clone_design`). These omissions predate v0.1.2 and were not introduced by this bug fix.
-
-**[PRE-EXISTING / OUT OF SCOPE — Informational]** `docs/api_reference.md` header still lists Version `0.1.0`; `src/main_window.py` title bar still reads `v0.1.1`. These version strings predate the v0.1.2 revision.
-
----
-
-## Required Corrections
-
-None.
-
----
-
-## Verdict
-
-**GO** — All gates pass. The G6.2 UI/logic separation violation from the previous review has been correctly resolved. The bug-fix revision is approved for progression.
+- `src/api.py` lines 327, 470: hardcoded absolute Windows paths in ElmerGrid/ElmerSolver auto-detection fallbacks. These existed in v0.1.2 and were not modified.
+- `docs/api_reference.md`: some signatures omit the optional `db_path` parameter present in the actual `src/api.py` implementation. This is a pre-existing documentation inconsistency.

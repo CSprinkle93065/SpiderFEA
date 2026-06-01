@@ -74,47 +74,162 @@ def recalculate_profile(design: SpiderDesign) -> SpiderDesign:
     r_ext = np.linspace(R_outer_landing_ID, R_outer_landing_OD, n_pts_ext)
     z_ext = np.zeros_like(r_ext)
 
-    # Concatenate centerline
-    r_center = np.concatenate([r_cone, r_corr[1:], r_ext[1:]])
-    z_center = np.concatenate([z_cone, z_corr[1:], z_ext[1:]])
-
-    # Normal thickness offset
-    dr = np.zeros_like(r_center)
-    dz = np.zeros_like(z_center)
-
-    # Central differences
-    dr[1:-1] = r_center[2:] - r_center[:-2]
-    dz[1:-1] = z_center[2:] - z_center[:-2]
-    # Endpoints
-    dr[0] = r_center[1] - r_center[0]
-    dz[0] = z_center[1] - z_center[0]
-    dr[-1] = r_center[-1] - r_center[-2]
-    dz[-1] = z_center[-1] - z_center[-2]
-
-    # Unit inward normal = (dz, -dr) / len
-    length = np.sqrt(dr**2 + dz**2)
-    nr_inward = dz / length
-    nz_inward = -dr / length
-
-    # Offset surfaces
+    # -----------------------------------------------------------------------
+    # Option D: segment-wise offset with corner joins
+    # -----------------------------------------------------------------------
     half_t = t / 2.0
-    r_lower = r_center + half_t * nr_inward
-    z_lower = z_center + half_t * nz_inward
-    r_upper = r_center - half_t * nr_inward
-    z_upper = z_center - half_t * nz_inward
 
-    # Build closed polygon
+    # Offset each segment independently
+    (r_lower_cone, z_lower_cone), (r_upper_cone, z_upper_cone) = _offset_segment(r_cone, z_cone, half_t)
+    (r_lower_corr, z_lower_corr), (r_upper_corr, z_upper_corr) = _offset_segment(r_corr, z_corr, half_t)
+    (r_lower_ext, z_lower_ext), (r_upper_ext, z_upper_ext) = _offset_segment(r_ext, z_ext, half_t)
+
+    # Upper surface miter joins
+    p_up_inner = _join_upper_miter(r_upper_cone, z_upper_cone, r_upper_corr, z_upper_corr)
+    p_up_outer = _join_upper_miter(r_upper_corr, z_upper_corr, r_upper_ext, z_upper_ext)
+
+    # Trim upper segments at miter intersections
+    r_upper_cone_trimmed, z_upper_cone_trimmed = _trim_upper_segment(
+        r_upper_cone, z_upper_cone, p_up_inner, at_start=False,
+    )
+    r_upper_corr_trimmed, z_upper_corr_trimmed = _trim_upper_segment(
+        r_upper_corr, z_upper_corr, p_up_inner, at_start=True,
+    )
+    r_upper_corr_trimmed, z_upper_corr_trimmed = _trim_upper_segment(
+        r_upper_corr_trimmed, z_upper_corr_trimmed, p_up_outer, at_start=False,
+    )
+    r_upper_ext_trimmed, z_upper_ext_trimmed = _trim_upper_segment(
+        r_upper_ext, z_upper_ext, p_up_outer, at_start=True,
+    )
+
+    # Lower surface arc caps (skip first/last points to avoid duplicates with adjacent segments)
+    arc_r_inner, arc_z_inner = _cap_lower_arc(
+        R_inner_corr, 0.0,
+        np.array([r_lower_cone[-1], z_lower_cone[-1]]),
+        np.array([r_lower_corr[0], z_lower_corr[0]]),
+        half_t, n_pts=8,
+    )
+    arc_r_outer, arc_z_outer = _cap_lower_arc(
+        R_outer_landing_ID, 0.0,
+        np.array([r_lower_corr[-1], z_lower_corr[-1]]),
+        np.array([r_lower_ext[0], z_lower_ext[0]]),
+        half_t, n_pts=8,
+    )
+
+    # Assemble closed polygon:
+    # lower_cone → arc_inner → lower_corr → arc_outer → lower_ext
+    # → upper_ext (reversed) → upper_corr (reversed) → upper_cone (reversed)
+    # Skip duplicate miter points at segment boundaries on the upper surface.
     profile_r: list[float] = []
     profile_z: list[float] = []
-    profile_r.extend(r_lower.tolist())
-    profile_z.extend(z_lower.tolist())
-    profile_r.extend(r_upper[::-1].tolist())
-    profile_z.extend(z_upper[::-1].tolist())
+
+    # Lower surface: inner → outer
+    profile_r.extend(r_lower_cone.tolist())
+    profile_z.extend(z_lower_cone.tolist())
+    profile_r.extend(arc_r_inner[1:-1].tolist())
+    profile_z.extend(arc_z_inner[1:-1].tolist())
+    profile_r.extend(r_lower_corr.tolist())
+    profile_z.extend(z_lower_corr.tolist())
+    profile_r.extend(arc_r_outer[1:-1].tolist())
+    profile_z.extend(arc_z_outer[1:-1].tolist())
+    profile_r.extend(r_lower_ext.tolist())
+    profile_z.extend(z_lower_ext.tolist())
+
+    # Upper surface: outer → inner (reversed)
+    profile_r.extend(r_upper_ext_trimmed[::-1].tolist())
+    profile_z.extend(z_upper_ext_trimmed[::-1].tolist())
+
+    # Skip duplicate p_up_outer when appending upper_corr reversed
+    if p_up_outer is not None:
+        profile_r.extend(r_upper_corr_trimmed[::-1][1:].tolist())
+        profile_z.extend(z_upper_corr_trimmed[::-1][1:].tolist())
+    else:
+        profile_r.extend(r_upper_corr_trimmed[::-1].tolist())
+        profile_z.extend(z_upper_corr_trimmed[::-1].tolist())
+
+    # Skip duplicate p_up_inner when appending upper_cone reversed
+    if p_up_inner is not None:
+        profile_r.extend(r_upper_cone_trimmed[::-1][1:].tolist())
+        profile_z.extend(z_upper_cone_trimmed[::-1][1:].tolist())
+    else:
+        profile_r.extend(r_upper_cone_trimmed[::-1].tolist())
+        profile_z.extend(z_upper_cone_trimmed[::-1].tolist())
 
     design.profile_r = profile_r
     design.profile_z = profile_z
 
     return design
+
+
+def _offset_segment(r_seg, z_seg, half_t):
+    """Compute inward and outward offsets for a single segment."""
+    dr = np.zeros_like(r_seg)
+    dz = np.zeros_like(z_seg)
+    # Central differences
+    dr[1:-1] = r_seg[2:] - r_seg[:-2]
+    dz[1:-1] = z_seg[2:] - z_seg[:-2]
+    # Endpoints
+    dr[0] = r_seg[1] - r_seg[0]
+    dz[0] = z_seg[1] - z_seg[0]
+    dr[-1] = r_seg[-1] - r_seg[-2]
+    dz[-1] = z_seg[-1] - z_seg[-2]
+    length = np.sqrt(dr**2 + dz**2)
+    nr_inward = dz / length
+    nz_inward = -dr / length
+    r_lo = r_seg + half_t * nr_inward
+    z_lo = z_seg + half_t * nz_inward
+    r_up = r_seg - half_t * nr_inward
+    z_up = z_seg - half_t * nz_inward
+    return (r_lo, z_lo), (r_up, z_up)
+
+
+def _line_intersection(p1, d1, p2, d2):
+    """Return intersection of lines p1+t*d1 and p2+s*d2, or None if parallel."""
+    det = d1[0] * d2[1] - d1[1] * d2[0]
+    if abs(det) < 1e-12:
+        return None
+    dp = p2 - p1
+    t = (dp[0] * d2[1] - dp[1] * d2[0]) / det
+    return p1 + t * d1
+
+
+def _join_upper_miter(r_up_a, z_up_a, r_up_b, z_up_b):
+    """Extend offset lines backward from junction; return intersection vertex."""
+    p1 = np.array([r_up_a[-2], z_up_a[-2]])
+    d1 = np.array([r_up_a[-1] - r_up_a[-2], z_up_a[-1] - z_up_a[-2]])
+    p2 = np.array([r_up_b[1], z_up_b[1]])
+    d2 = np.array([r_up_b[0] - r_up_b[1], z_up_b[0] - z_up_b[1]])
+    return _line_intersection(p1, d1, p2, d2)
+
+
+def _trim_upper_segment(r_seg, z_seg, intersection, at_start):
+    """
+    Trim a segment at a miter intersection.
+    If at_start=True, keep points from intersection onward.
+    If at_start=False, keep points up to intersection.
+    Returns new arrays. If intersection is None, returns originals.
+    """
+    if intersection is None:
+        return r_seg, z_seg
+    ir, iz = float(intersection[0]), float(intersection[1])
+    if at_start:
+        idx = int(np.searchsorted(r_seg, ir, side="left"))
+        if idx < len(r_seg) and abs(r_seg[idx] - ir) < 1e-12 and abs(z_seg[idx] - iz) < 1e-12:
+            return r_seg[idx:], z_seg[idx:]
+        return np.concatenate([[ir], r_seg[idx:]]), np.concatenate([[iz], z_seg[idx:]])
+    else:
+        idx = int(np.searchsorted(r_seg, ir, side="right")) - 1
+        if idx >= 0 and abs(r_seg[idx] - ir) < 1e-12 and abs(z_seg[idx] - iz) < 1e-12:
+            return r_seg[: idx + 1], z_seg[: idx + 1]
+        return np.concatenate([r_seg[: idx + 1], [ir]]), np.concatenate([z_seg[: idx + 1], [iz]])
+
+
+def _cap_lower_arc(center_r, center_z, p_start, p_end, half_t, n_pts=8):
+    """Generate circular arc of radius half_t from p_start to p_end."""
+    a1 = math.atan2(p_start[1] - center_z, p_start[0] - center_r)
+    a2 = math.atan2(p_end[1] - center_z, p_end[0] - center_r)
+    angles = np.linspace(a1, a2, n_pts)
+    return center_r + half_t * np.cos(angles), center_z + half_t * np.sin(angles)
 
 
 def validate_geometry(design: SpiderDesign) -> tuple[bool, str]:
